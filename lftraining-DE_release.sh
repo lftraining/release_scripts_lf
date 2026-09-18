@@ -119,7 +119,7 @@ prompt_continue
 
 # Run cmtool download
 echo "Running cmtool download..."
-./common/UTILS/cmtool download || echo "cmtool download failed."
+./common/cmtool download || echo "cmtool download failed."
 
 echo "cmtool download completed (or failed)."
 prompt_continue
