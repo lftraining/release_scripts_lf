@@ -1,0 +1,17 @@
+# Default Docker image used to build courses during release.
+# Used as the pre-filled default when lftraining_release.sh prompts for an image,
+# unless a course-build-config.yaml in the course repo root sets one first.
+# Referenced as ${IMAGE} in the build commands below.
+image: eeganlf/lf-tex-full-2025:v1.0
+
+# Fallback build commands, used when the course repo's course-build-config.yaml
+# doesn't exist or doesn't define the relevant key. ${IMAGE} is replaced with the
+# resolved image (see above) before the command runs; it is a placeholder the
+# release script substitutes, not YAML syntax, so keep it exactly as written.
+ilt-build-command: >
+  docker run --rm -v $(pwd):/$(basename $(pwd)) --user $(id -u):$(id -g)
+  --workdir /$(basename $(pwd)) ${IMAGE} /bin/bash -c "make release-full"
+
+elearning-build-command: >
+  docker run --rm -v $(pwd):/$(basename $(pwd)) --user $(id -u):$(id -g)
+  --workdir /$(basename $(pwd)) ${IMAGE} /bin/bash -c "make release-elearning"

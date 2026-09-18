@@ -1,6 +1,17 @@
 #!/bin/bash
 # mkdir --parents ../RELEASE/$COURSE_NAME/outlines/; mv $COURSE_NAME_$(git describe --tags --abbrev=0.txt) $_
 
+# Resolve the directory this script lives in *before* anything cd's around,
+# so release-config.yaml can always be found regardless of cwd.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_CONFIG="$SCRIPT_DIR/release-config.yaml"
+COURSE_CONFIG_NAME="course-build-config.yaml"
+BUILD_IMAGE=""          # set interactively after the course repo is cloned
+BUILD_IMAGE_SOURCE=""   # human-readable source, for logging
+
+command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 is required (used to parse YAML config files)." >&2; exit 1; }
+python3 -c 'import yaml' 2>/dev/null || { echo "ERROR: python3 PyYAML is required to parse YAML config files (pip install pyyaml)." >&2; exit 1; }
+
 # Danger mode: when set to 1, prompt_continue skips all prompts and the script runs to completion
 DANGER_MODE=0
 
@@ -17,6 +28,25 @@ prompt_continue() {
             * ) echo "Please answer y, n, or d.";;
         esac
     done
+}
+
+# Print the value of $2 from the YAML file $1; return non-zero if absent/unreadable.
+read_config_key() {
+    local file="$1"
+    local key="$2"
+    [ -f "$file" ] || return 1
+    python3 -c '
+import sys, yaml
+try:
+    data = yaml.safe_load(open(sys.argv[1])) or {}
+except Exception:
+    sys.exit(1)
+v = data.get(sys.argv[2])
+if isinstance(v, str) and v.strip():
+    print(v.strip())
+else:
+    sys.exit(1)
+' "$file" "$key" 2>/dev/null
 }
 
 # Default organization name
@@ -78,6 +108,83 @@ echo "Removing any existing RELEASE output for $COURSE_NAME V$VERSION..."
 git clone git@github.com:$ORGANIZATION_NAME/$COURSE_REPO.git
 
 echo "Course repository cloned inside LFCW."
+
+# Resolve the default build image: course repo's course-build-config.yaml > this repo's release-config.yaml.
+# The user is always prompted; hitting Enter accepts whichever default was found (if any).
+COURSE_CONFIG="$LFCW_DIR/$COURSE_REPO/$COURSE_CONFIG_NAME"
+
+DEFAULT_IMAGE=""
+DEFAULT_SOURCE=""
+if DEFAULT_IMAGE="$(read_config_key "$COURSE_CONFIG" image)"; then
+    DEFAULT_SOURCE="$COURSE_CONFIG"
+elif DEFAULT_IMAGE="$(read_config_key "$REPO_CONFIG" image)"; then
+    DEFAULT_SOURCE="$REPO_CONFIG"
+fi
+
+if [ -n "$DEFAULT_IMAGE" ]; then
+    read -p "Enter the Docker image to build with [Enter for default: $DEFAULT_IMAGE, from $DEFAULT_SOURCE]: " BUILD_IMAGE
+    if [ -z "$BUILD_IMAGE" ]; then
+        BUILD_IMAGE="$DEFAULT_IMAGE"
+        BUILD_IMAGE_SOURCE="$DEFAULT_SOURCE"
+    else
+        BUILD_IMAGE_SOURCE="user input"
+    fi
+else
+    echo "No default build image found."
+    echo "  Checked course repo config: $COURSE_CONFIG"
+    echo "  Checked this repo's config: $REPO_CONFIG"
+    echo ""
+    echo "You must either enter an image below, or cancel now (Ctrl+C) and create one of:"
+    echo "  - $COURSE_CONFIG"
+    echo "  - $REPO_CONFIG"
+    echo "  each with contents:  image: <your-image>:<tag>"
+    echo ""
+    while [ -z "$BUILD_IMAGE" ]; do
+        read -p "Enter the Docker image to build with (required — no default available): " BUILD_IMAGE
+        [ -z "$BUILD_IMAGE" ] && echo "An image is required since no config default was found."
+    done
+    BUILD_IMAGE_SOURCE="user input"
+fi
+
+echo "Build image: $BUILD_IMAGE  (source: $BUILD_IMAGE_SOURCE)"
+
+# Resolve the build command: course repo's course-build-config.yaml > this repo's release-config.yaml.
+# Which key to look for depends on course type, matching the elearning/ILT split further below.
+if [ "$COURSE_TYPE" == "e" ]; then
+    BUILD_CMD_KEY="elearning-build-command"
+else
+    BUILD_CMD_KEY="ilt-build-command"
+fi
+
+BUILD_CMD=""
+BUILD_CMD_SOURCE=""
+if BUILD_CMD="$(read_config_key "$COURSE_CONFIG" "$BUILD_CMD_KEY")"; then
+    BUILD_CMD_SOURCE="$COURSE_CONFIG"
+elif BUILD_CMD="$(read_config_key "$REPO_CONFIG" "$BUILD_CMD_KEY")"; then
+    BUILD_CMD_SOURCE="$REPO_CONFIG"
+else
+    echo "ERROR: no '$BUILD_CMD_KEY' found in either config file:" >&2
+    echo "  Checked course repo config: $COURSE_CONFIG" >&2
+    echo "  Checked this repo's config: $REPO_CONFIG" >&2
+    echo "Add a '$BUILD_CMD_KEY: <command>' entry to one of the above and re-run." >&2
+    exit 1
+fi
+
+# Substitute the resolved image into the build command (supports the literal placeholder ${IMAGE}).
+BUILD_CMD="${BUILD_CMD//'${IMAGE}'/$BUILD_IMAGE}"
+
+echo "Build command: $BUILD_CMD  (source: $BUILD_CMD_SOURCE)"
+
+# Fail before the commit/tag/push below if docker isn't reachable or the image cannot be obtained.
+docker info >/dev/null 2>&1 || {
+    echo "ERROR: cannot reach the Docker daemon. Is Docker running?" >&2
+    exit 1
+}
+docker image inspect "$BUILD_IMAGE" >/dev/null 2>&1 || docker pull "$BUILD_IMAGE" || {
+    echo "ERROR: could not pull build image '$BUILD_IMAGE'." >&2
+    exit 1
+}
+
 prompt_continue
 
 # Create RELEASE directory
@@ -144,24 +251,25 @@ prompt_continue
 
 # Run cmtool download
 echo "Running cmtool download..."
-./common/UTILS/cmtool download || echo "cmtool download failed."
+./common/cmtool download || echo "cmtool download failed."
 
 echo "cmtool download completed or failed. IT IS OK TO FAIL IF THIS PARTICULAR COURSE DOES NOT HAVE RESOURCES TO DOWNLOAD."
 prompt_continue
 
-# Run make command based on course type
+# Run the resolved build command (see BUILD_CMD resolution above)
 if [ "$COURSE_TYPE" == "e" ]; then
     cd ../$COURSE_REPO
     make clean
     cd ../$COURSE_NAME
-    echo "Running make for elearning..."
-    docker run --rm -v $(pwd):/$(basename $(pwd)) --user $(id -u):$(id -g) --workdir /$(basename $(pwd)) eeganlf/lf-tex-full-2025:v1.0 /bin/bash -c "make release-elearning"
-else
-    echo "Running make for ILT..."
-    docker run --rm -v $(pwd):/$(basename $(pwd)) --user $(id -u):$(id -g) --workdir /$(basename $(pwd)) eeganlf/lf-tex-full-2025:v1.0 /bin/bash -c "make release-full"
 fi
 
-echo "Make command executed based on course type."
+echo "Running build command: $BUILD_CMD"
+eval "$BUILD_CMD" || {
+    echo "ERROR: build command failed." >&2
+    exit 1
+}
+
+echo "Build command executed."
 prompt_continue
 
 # Navigate back to LFCW and run release_and_upload.sh
