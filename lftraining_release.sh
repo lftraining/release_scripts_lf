@@ -194,16 +194,10 @@ mkdir RELEASE/BLURBS
 echo "RELEASE directory created."
 prompt_continue
 
-# Create softlink for elearning
-if [ "$COURSE_TYPE" == "e" ]; then
-    echo "Creating softlink for elearning..."
-    ln -s $COURSE_REPO $COURSE_NAME
-fi
-
-echo "Softlink created for elearning (if applicable)."
-prompt_continue
-
-cd $COURSE_NAME
+# Elearning courses (e.g. LFS207) build directly from their ILT combo repo's
+# checkout (e.g. LFS307) with COURSE=<name> passed explicitly to make — no
+# symlink needed. For a non-combo course COURSE_REPO == COURSE_NAME anyway.
+cd $COURSE_REPO
 
 # Re-run safety: drop any existing tag for this version locally and on GitHub
 # so the tag + push below can recreate it cleanly on the new commit.
@@ -258,9 +252,7 @@ prompt_continue
 
 # Run the resolved build command (see BUILD_CMD resolution above)
 if [ "$COURSE_TYPE" == "e" ]; then
-    cd ../$COURSE_REPO
     make clean
-    cd ../$COURSE_NAME
 fi
 
 echo "Running build command: $BUILD_CMD"
@@ -275,12 +267,12 @@ prompt_continue
 # Navigate back to LFCW and run release_and_upload.sh
 echo "Navigating back to LFCW and running release_and_upload.sh..."
 cd ..
-./release_and_upload.sh $COURSE_NAME
+./release_and_upload.sh $COURSE_NAME $COURSE_REPO
 
 echo "Navigated back to LFCW and ran release_and_upload.sh."
 prompt_continue
 echo "Cleaning up"
-cd $COURSE_NAME
+cd $COURSE_REPO
 make clean
 cd ..
 
