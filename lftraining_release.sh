@@ -7,7 +7,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_CONFIG="$SCRIPT_DIR/release-config.yaml"
 COURSE_CONFIG_NAME="course-build-config.yaml"
 BUILD_IMAGE=""          # set interactively after the course repo is cloned
-BUILD_IMAGE_SOURCE=""   # human-readable source, for logging
 
 command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 is required (used to parse YAML config files)." >&2; exit 1; }
 python3 -c 'import yaml' 2>/dev/null || { echo "ERROR: python3 PyYAML is required to parse YAML config files (pip install pyyaml)." >&2; exit 1; }
@@ -109,71 +108,72 @@ git clone git@github.com:$ORGANIZATION_NAME/$COURSE_REPO.git
 
 echo "Course repository cloned inside LFCW."
 
-# Resolve the default build image: course repo's course-build-config.yaml > this repo's release-config.yaml.
-# The user is always prompted; hitting Enter accepts whichever default was found (if any).
+# Every course must ship its own course-build-config.yaml — no fallback to this
+# repo's release-config.yaml. A per-course file is the only way to keep image,
+# build commands, and build-system-version (checked below) consistent with each
+# other for that specific course; a shared fallback let them drift silently.
 COURSE_CONFIG="$LFCW_DIR/$COURSE_REPO/$COURSE_CONFIG_NAME"
 
-DEFAULT_IMAGE=""
-DEFAULT_SOURCE=""
-if DEFAULT_IMAGE="$(read_config_key "$COURSE_CONFIG" image)"; then
-    DEFAULT_SOURCE="$COURSE_CONFIG"
-elif DEFAULT_IMAGE="$(read_config_key "$REPO_CONFIG" image)"; then
-    DEFAULT_SOURCE="$REPO_CONFIG"
+if [ ! -f "$COURSE_CONFIG" ]; then
+    echo "ERROR: $COURSE_CONFIG_NAME not found in course repo." >&2
+    echo "  Expected: $COURSE_CONFIG" >&2
+    echo "Every course must commit its own $COURSE_CONFIG_NAME at its repo root," >&2
+    echo "defining: image, ilt-build-command, elearning-build-command, build-system-version." >&2
+    echo "See $REPO_CONFIG for a template to copy in." >&2
+    exit 1
 fi
 
-if [ -n "$DEFAULT_IMAGE" ]; then
-    read -p "Enter the Docker image to build with [Enter for default: $DEFAULT_IMAGE, from $DEFAULT_SOURCE]: " BUILD_IMAGE
-    if [ -z "$BUILD_IMAGE" ]; then
-        BUILD_IMAGE="$DEFAULT_IMAGE"
-        BUILD_IMAGE_SOURCE="$DEFAULT_SOURCE"
-    else
-        BUILD_IMAGE_SOURCE="user input"
-    fi
+DEFAULT_IMAGE="$(read_config_key "$COURSE_CONFIG" image)" || {
+    echo "ERROR: $COURSE_CONFIG_NAME is missing required key 'image'." >&2
+    echo "  File: $COURSE_CONFIG" >&2
+    exit 1
+}
+
+# In danger mode the default is accepted automatically, like every other
+# prompt_continue in this script; otherwise the user is prompted and hitting
+# Enter accepts the default.
+if [ "$DANGER_MODE" = "1" ]; then
+    echo "Using image: $DEFAULT_IMAGE (from $COURSE_CONFIG)"
+    BUILD_IMAGE="$DEFAULT_IMAGE"
 else
-    echo "No default build image found."
-    echo "  Checked course repo config: $COURSE_CONFIG"
-    echo "  Checked this repo's config: $REPO_CONFIG"
-    echo ""
-    echo "You must either enter an image below, or cancel now (Ctrl+C) and create one of:"
-    echo "  - $COURSE_CONFIG"
-    echo "  - $REPO_CONFIG"
-    echo "  each with contents:  image: <your-image>:<tag>"
-    echo ""
-    while [ -z "$BUILD_IMAGE" ]; do
-        read -p "Enter the Docker image to build with (required — no default available): " BUILD_IMAGE
-        [ -z "$BUILD_IMAGE" ] && echo "An image is required since no config default was found."
-    done
-    BUILD_IMAGE_SOURCE="user input"
+    read -p "Enter the Docker image to build with [Enter for default: $DEFAULT_IMAGE, from $COURSE_CONFIG]: " BUILD_IMAGE
+    [ -z "$BUILD_IMAGE" ] && BUILD_IMAGE="$DEFAULT_IMAGE"
 fi
 
-echo "Build image: $BUILD_IMAGE  (source: $BUILD_IMAGE_SOURCE)"
+echo "Build image: $BUILD_IMAGE"
 
-# Resolve the build command: course repo's course-build-config.yaml > this repo's release-config.yaml.
-# Which key to look for depends on course type, matching the elearning/ILT split further below.
+# Resolve the build command from the course's own config. Which key to look for
+# depends on course type, matching the elearning/ILT split further below.
 if [ "$COURSE_TYPE" == "e" ]; then
     BUILD_CMD_KEY="elearning-build-command"
 else
     BUILD_CMD_KEY="ilt-build-command"
 fi
 
-BUILD_CMD=""
-BUILD_CMD_SOURCE=""
-if BUILD_CMD="$(read_config_key "$COURSE_CONFIG" "$BUILD_CMD_KEY")"; then
-    BUILD_CMD_SOURCE="$COURSE_CONFIG"
-elif BUILD_CMD="$(read_config_key "$REPO_CONFIG" "$BUILD_CMD_KEY")"; then
-    BUILD_CMD_SOURCE="$REPO_CONFIG"
-else
-    echo "ERROR: no '$BUILD_CMD_KEY' found in either config file:" >&2
-    echo "  Checked course repo config: $COURSE_CONFIG" >&2
-    echo "  Checked this repo's config: $REPO_CONFIG" >&2
-    echo "Add a '$BUILD_CMD_KEY: <command>' entry to one of the above and re-run." >&2
+BUILD_CMD="$(read_config_key "$COURSE_CONFIG" "$BUILD_CMD_KEY")" || {
+    echo "ERROR: $COURSE_CONFIG_NAME is missing required key '$BUILD_CMD_KEY'." >&2
+    echo "  File: $COURSE_CONFIG" >&2
     exit 1
-fi
+}
 
 # Substitute the resolved image into the build command (supports the literal placeholder ${IMAGE}).
 BUILD_CMD="${BUILD_CMD//'${IMAGE}'/$BUILD_IMAGE}"
 
-echo "Build command: $BUILD_CMD  (source: $BUILD_CMD_SOURCE)"
+echo "Build command: $BUILD_CMD"
+
+# Version of the common build system this course is pinned to (a tag in the
+# build-system submodule, checked out below once submodules are initialized).
+BUILD_SYSTEM_VERSION="$(read_config_key "$COURSE_CONFIG" build-system-version)" || {
+    echo "ERROR: $COURSE_CONFIG_NAME is missing required key 'build-system-version'." >&2
+    echo "  File: $COURSE_CONFIG" >&2
+    exit 1
+}
+# Path to the build-system submodule within the course repo; defaults to "common"
+# (LFS307 and most courses) but some courses use a differently named submodule,
+# e.g. LFD473 uses "common_LFD".
+BUILD_SYSTEM_SUBMODULE="$(read_config_key "$COURSE_CONFIG" build-system-submodule)" || BUILD_SYSTEM_SUBMODULE="common"
+
+echo "Build system: $BUILD_SYSTEM_SUBMODULE @ $BUILD_SYSTEM_VERSION"
 
 # Fail before the commit/tag/push below if docker isn't reachable or the image cannot be obtained.
 docker info >/dev/null 2>&1 || {
@@ -223,11 +223,48 @@ echo "Checking and updating submodules..."
 git submodule update --init --recursive
 
 echo "Submodules checked and updated."
+
+# Enforce build-system-version: pin the build-system submodule to the tag the
+# course's own config declares, rather than trusting whatever commit the
+# submodule happened to be pinned to. This is what catches a course silently
+# drifting onto a stale build-system commit (the LFS307/build-tex2021 incident)
+# instead of building against an unverified checkout.
+[ -d "$BUILD_SYSTEM_SUBMODULE" ] || {
+    echo "ERROR: build-system submodule '$BUILD_SYSTEM_SUBMODULE' not found in $COURSE_REPO." >&2
+    echo "Checked: $(pwd)/$BUILD_SYSTEM_SUBMODULE" >&2
+    exit 1
+}
+pushd "$BUILD_SYSTEM_SUBMODULE" >/dev/null
+PINNED_COMMIT="$(git rev-parse HEAD)"
+git fetch --tags >/dev/null 2>&1
+if ! git checkout "$BUILD_SYSTEM_VERSION" 2>/tmp/build-system-checkout-err; then
+    echo "ERROR: '$BUILD_SYSTEM_SUBMODULE' has no tag/ref '$BUILD_SYSTEM_VERSION'" >&2
+    echo "(declared as build-system-version in $COURSE_CONFIG)." >&2
+    cat /tmp/build-system-checkout-err >&2
+    popd >/dev/null
+    exit 1
+fi
+rm -f /tmp/build-system-checkout-err
+RESOLVED_COMMIT="$(git rev-parse HEAD)"
+if [ "$PINNED_COMMIT" != "$RESOLVED_COMMIT" ]; then
+    echo "WARNING: $BUILD_SYSTEM_SUBMODULE was pinned to $PINNED_COMMIT, which is not" >&2
+    echo "build-system-version $BUILD_SYSTEM_VERSION ($RESOLVED_COMMIT)." >&2
+    echo "Building against $BUILD_SYSTEM_VERSION as declared in $COURSE_CONFIG." >&2
+    echo "The course repo's committed submodule pointer is now stale — fix it in a" >&2
+    echo "normal commit so this doesn't drift again (this script does not do so" >&2
+    echo "automatically, to keep the version-bump commit below scoped to just the" >&2
+    echo "version change)." >&2
+fi
+popd >/dev/null
+
 prompt_continue
 
-# Commit and tag the changes
+# Commit and tag the changes. Scoped to just the .tex version bump (not `-a`)
+# so a build-system-version checkout above that left the submodule pointer
+# changed isn't swept into this commit and pushed unintentionally.
 echo "Committing and tagging the changes..."
-git commit -asm "Version $VERSION"
+git add "${COURSE_NAME}.tex"
+git commit -m "Version $VERSION"
 git tag $VERSION
 git push
 git push --tags
