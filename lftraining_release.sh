@@ -55,14 +55,47 @@ ORGANIZATION_NAME="lftraining"
 echo "Prompting user for course details..."
 read -p "Enter the name of the course (COURSE_NAME): " COURSE_NAME
 read -p "Enter the repository to build (COURSE_REPO): " COURSE_REPO
-read -p "Enter the version of the course (ILT version should be provided by maintainer/author and should be in something like #.#.# format. Do NOT put a 'v' or 'r' in front; the script adds the 'r' for ILT) (e-learning version is format yyyy-mm-dd) (VERSION): " VERSION
+read -p "Enter the version of the course (ILT version should be provided by maintainer/author and should be in something like #.#.# format. Do NOT put a 'v' or 'r' in front; this is the version used in the .tex, PDFs and folder names, and the script adds the 'r' only to the GitHub tag for ILT) (e-learning version is format yyyy-mm-dd) (VERSION): " VERSION
 read -p "Enter 'e' for elearning or 'i' for ILT: " COURSE_TYPE
 
-# ILT release versions are r-prefixed (user enters 6.18-u1 -> r6.18-u1).
+# Optional: build from a specific tag or branch of the course repo (e.g. an author's
+# tag) instead of its default branch. Leave empty for the normal release flow.
+read -p "Enter a git tag or branch to build from (COURSE_REF) [Enter for the repo's default branch]: " COURSE_REF
+
+# An older ref may predate the course's course-build-config.yaml (or need a different
+# one than what's committed there), so allow supplying a config file from outside the repo.
+CONFIG_OVERRIDE=""
+if [ -n "$COURSE_REF" ]; then
+    read -p "Path to a $COURSE_CONFIG_NAME to use instead of the one in the repo at $COURSE_REF [Enter to use the committed one]: " CONFIG_OVERRIDE
+    if [ -n "$CONFIG_OVERRIDE" ]; then
+        # Resolve to an absolute path now: the script cd's elsewhere before the config is read.
+        CONFIG_OVERRIDE="$(realpath -e "$CONFIG_OVERRIDE" 2>/dev/null)" || {
+            echo "ERROR: config override file not found." >&2
+            exit 1
+        }
+    fi
+fi
+
+# VERSION is the plain version (e.g. 6.18-u1) and is what appears everywhere the
+# release is visible: \version in the .tex, PDF titles, RELEASE/ and Drive folder
+# names, the spreadsheet and the announcement. ONLY the GitHub tag for an ILT
+# release gets an 'r' prefix (6.18-u1 -> tag r6.18-u1), held in TAG_VERSION.
 # Strip a leading r/v in case one was typed anyway, so we never get "rr".
 if [ "$COURSE_TYPE" == "i" ]; then
-    VERSION="r${VERSION#[rRvV]}"
-    echo "ILT version will be: $VERSION"
+    VERSION="${VERSION#[rRvV]}"
+    TAG_VERSION="r${VERSION}"
+    echo "ILT version will be: $VERSION (GitHub tag: $TAG_VERSION)"
+else
+    TAG_VERSION="$VERSION"
+fi
+
+# The re-run safety step further down deletes the $TAG_VERSION tag locally and on GitHub,
+# so the release tag must never equal the ref being built from — that would
+# delete the author's tag.
+if [ -n "$COURSE_REF" ] && [ "$TAG_VERSION" == "$COURSE_REF" ]; then
+    echo "ERROR: release tag '$TAG_VERSION' is the same as the ref being built from ('$COURSE_REF')." >&2
+    echo "Re-running would delete that tag. Choose a different release version." >&2
+    exit 1
 fi
 
 echo "User inputs received."
@@ -111,7 +144,12 @@ echo "Removing any existing course build directory for a clean checkout..."
 echo "Removing any existing RELEASE output for $COURSE_NAME V$VERSION..."
 [ -n "$COURSE_NAME" ] && [ -n "$VERSION" ] && rm -rf "$LFCW_DIR/RELEASE/$COURSE_NAME/V$VERSION"
 
-git clone git@github.com:$ORGANIZATION_NAME/$COURSE_REPO.git
+CLONE_ARGS=()
+[ -n "$COURSE_REF" ] && CLONE_ARGS=(-b "$COURSE_REF")
+git clone "${CLONE_ARGS[@]}" git@github.com:$ORGANIZATION_NAME/$COURSE_REPO.git || {
+    echo "ERROR: could not clone $COURSE_REPO${COURSE_REF:+ at ref '$COURSE_REF'}." >&2
+    exit 1
+}
 
 echo "Course repository cloned inside LFCW."
 
@@ -121,12 +159,20 @@ echo "Course repository cloned inside LFCW."
 # other for that specific course; a shared fallback let them drift silently.
 COURSE_CONFIG="$LFCW_DIR/$COURSE_REPO/$COURSE_CONFIG_NAME"
 
+# A config supplied at the prompt (for building an older ref) takes precedence.
+if [ -n "$CONFIG_OVERRIDE" ]; then
+    COURSE_CONFIG="$CONFIG_OVERRIDE"
+    echo "Using config override instead of the one in the repo: $COURSE_CONFIG"
+fi
+
 if [ ! -f "$COURSE_CONFIG" ]; then
     echo "ERROR: $COURSE_CONFIG_NAME not found in course repo." >&2
     echo "  Expected: $COURSE_CONFIG" >&2
     echo "Every course must commit its own $COURSE_CONFIG_NAME at its repo root," >&2
     echo "defining: image, ilt-build-command, elearning-build-command, build-system-version." >&2
     echo "See $REPO_CONFIG for a template to copy in." >&2
+    echo "To build an older ref that predates its config, re-run and give a config file path" >&2
+    echo "at the override prompt (see course-configs/ in $SCRIPT_DIR)." >&2
     exit 1
 fi
 
@@ -206,11 +252,11 @@ prompt_continue
 # symlink needed. For a non-combo course COURSE_REPO == COURSE_NAME anyway.
 cd $COURSE_REPO
 
-# Re-run safety: drop any existing tag for this version locally and on GitHub
+# Re-run safety: drop any existing tag for this release locally and on GitHub
 # so the tag + push below can recreate it cleanly on the new commit.
-echo "Deleting any existing '$VERSION' tag (local + remote) to avoid collisions..."
-git tag -d "$VERSION" 2>/dev/null || true
-git push --delete origin "$VERSION" 2>/dev/null || true
+echo "Deleting any existing '$TAG_VERSION' tag (local + remote) to avoid collisions..."
+git tag -d "$TAG_VERSION" 2>/dev/null || true
+git push --delete origin "$TAG_VERSION" 2>/dev/null || true
 
 # Update version number in .tex file
 echo "Updating version number in .tex file..."
@@ -271,10 +317,24 @@ prompt_continue
 # changed isn't swept into this commit and pushed unintentionally.
 echo "Committing and tagging the changes..."
 git add "${COURSE_NAME}.tex"
-git commit -m "Version $VERSION"
-git tag $VERSION
-git push
-git push --tags
+# When the .tex already carries this version (e.g. building from an author's tag)
+# there is nothing to commit, and the tag goes on the existing commit as-is.
+if git diff --cached --quiet; then
+    echo "The .tex already says version $VERSION; no version commit needed."
+else
+    git commit -m "Version $VERSION"
+fi
+git tag "$TAG_VERSION"
+if git symbolic-ref -q HEAD >/dev/null; then
+    git push
+    git push --tags
+else
+    # Detached HEAD (cloned at a tag): there is no branch to push, and pushing all
+    # tags could touch unrelated ones. Push just the release tag, which also uploads
+    # the version-bump commit it points at (if any); the author's branch and tag stay untouched.
+    echo "Detached HEAD (built from ref '$COURSE_REF'): pushing only tag $TAG_VERSION."
+    git push origin "refs/tags/$TAG_VERSION"
+fi
 
 echo "Changes committed and tagged."
 
@@ -289,7 +349,10 @@ prompt_continue
 
 # Run cmtool download
 echo "Running cmtool download..."
-./common/cmtool download || echo "cmtool download failed."
+# Newer build systems keep cmtool at common/cmtool; older ones (pre-2.0 layout) at common/UTILS/cmtool.
+CMTOOL=./common/cmtool
+[ -x "$CMTOOL" ] || CMTOOL=./common/UTILS/cmtool
+$CMTOOL download || echo "cmtool download failed."
 
 echo "cmtool download completed or failed. IT IS OK TO FAIL IF THIS PARTICULAR COURSE DOES NOT HAVE RESOURCES TO DOWNLOAD."
 prompt_continue

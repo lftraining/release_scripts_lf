@@ -55,3 +55,31 @@ ilt-build-command: >
 If a course repo has no `course-build-config.yaml`, or is missing any required key, the script
 errors out immediately and tells you exactly what's missing and where to add it — a full build
 command or a submodule tag is too easy to mistype to prompt for interactively.
+
+## Building from a tag or branch
+
+By default the script builds the course repo's default branch. To release from a specific tag or
+branch instead (e.g. a snapshot an author tagged), enter it at the `COURSE_REF` prompt; the repo is
+then cloned with `git clone -b <ref>` and its submodules are checked out exactly as pinned there.
+
+An older ref may predate the course's `course-build-config.yaml`, or need a different one than what
+is committed on the default branch. In that case the script then asks for the path to a config file
+to use **instead of** the one in the repo. Configs written for this purpose are kept in
+[`course-configs/`](course-configs/), named `<course>-<ref>.yaml` (e.g.
+[`LFD450-v6.4-u3.yaml`](course-configs/LFD450-v6.4-u3.yaml)). For such a ref, set
+`build-system-submodule` and `build-system-version` to what that ref actually pins — a SHA works for
+an untagged build-system commit — so the build-system check confirms the author's pin rather than
+moving it.
+
+Notes on a tag/branch build:
+
+- For ILT releases, only the **GitHub tag** gets an `r` prefix: entering version `6.4-u3` tags the
+  release `r6.4-u3`, while `\version` in the `.tex`, the PDF titles, the `RELEASE/` and Drive
+  folder names, the spreadsheet and the announcement all use the plain `6.4-u3`.
+- The release tag (`r<version>`) must differ from the ref (the script deletes any existing tag
+  named like the release tag, so it refuses to run if they match).
+- A tag clone is a detached HEAD, so the script pushes only the new release tag. If the `.tex`
+  already carries the version (the usual case for an author's tag), no commit is made and the tag
+  lands on the author's commit; otherwise it also uploads the one-line version commit it points at.
+  The branch and the author's original tag are left untouched.
+- `cmtool` is found at `common/cmtool`, falling back to `common/UTILS/cmtool` for older build systems.
