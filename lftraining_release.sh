@@ -55,8 +55,15 @@ ORGANIZATION_NAME="lftraining"
 echo "Prompting user for course details..."
 read -p "Enter the name of the course (COURSE_NAME): " COURSE_NAME
 read -p "Enter the repository to build (COURSE_REPO): " COURSE_REPO
-read -p "Enter the version of the course (ILT version should be provided by maintainer/author and should be in something like #.#.# format. Do NOT put a 'v' in front) (e-learning version is format yyyy-mm-dd) (VERSION): " VERSION
+read -p "Enter the version of the course (ILT version should be provided by maintainer/author and should be in something like #.#.# format. Do NOT put a 'v' or 'r' in front; the script adds the 'r' for ILT) (e-learning version is format yyyy-mm-dd) (VERSION): " VERSION
 read -p "Enter 'e' for elearning or 'i' for ILT: " COURSE_TYPE
+
+# ILT release versions are r-prefixed (user enters 6.18-u1 -> r6.18-u1).
+# Strip a leading r/v in case one was typed anyway, so we never get "rr".
+if [ "$COURSE_TYPE" == "i" ]; then
+    VERSION="r${VERSION#[rRvV]}"
+    echo "ILT version will be: $VERSION"
+fi
 
 echo "User inputs received."
 prompt_continue
