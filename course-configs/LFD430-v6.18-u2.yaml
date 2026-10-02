@@ -1,0 +1,18 @@
+# LFD430 at the author's tag v6.18-u2 (commit ce4bdae), which has no course-build-config.yaml.
+# Supplied to lftraining_release.sh at the config-override prompt.
+#
+# At that tag, ./common is a symlink to common_LFD/common, a nested submodule pinned to
+# 59d93ad on lftraining/common's build-tex2021 branch (TeX Live 2021), hence the TL2021 image
+# (the tag's README names eeganlf/tex-build:v1.0 for it).
+image: eeganlf/tex-build:v1.0
+
+build-system-submodule: common_LFD/common
+
+# That commit has no tag, so it is pinned by SHA: the script's enforcement checkout then just
+# confirms the pointer the author committed, rather than moving the build system.
+build-system-version: "59d93ad1fa8bd2c49ad2b97fc082b9e7a9639c94"
+
+# Serial build (no -j): this pre-2.0.3 common shares one _minted cache across the release goals.
+ilt-build-command: >
+  docker run --rm --env LC_ALL=C -v $(pwd):/$(basename $(pwd)) --user $(id -u):$(id -g)
+  --workdir /$(basename $(pwd)) ${IMAGE} /bin/bash -c "make COURSE=LFD430 release-full"
