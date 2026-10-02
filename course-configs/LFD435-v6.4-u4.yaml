@@ -13,6 +13,13 @@ build-system-submodule: common_LFD/common
 build-system-version: "59d93ad1fa8bd2c49ad2b97fc082b9e7a9639c94"
 
 # Serial build (no -j): this pre-2.0.3 common shares one _minted cache across the release goals.
+#
+# Workaround: the tag's LFD450/CHAPS/LFD450_QEMU/riscv64/LFD435labs/qemu-9.0.2.tar.xz is a symlink to
+# ../../../../../BINARIES/qemu-9.0.2.tar.xz, i.e. LFD435's own top-level BINARIES/. cmtool fills that from
+# cm RESOURCES/LFD435/, which has no qemu-9.0.2 (newest is 8.1.0), so the SOLUTIONS broken-link check fails.
+# LFD450's resources do have it (cmtool puts it in LFD450/BINARIES/), so copy it across before building.
+# Drop the cp once qemu-9.0.2.tar.xz is uploaded to cm RESOURCES/LFD435/.
 ilt-build-command: >
+  cp LFD450/BINARIES/qemu-9.0.2.tar.xz BINARIES/ &&
   docker run --rm --env LC_ALL=C -v $(pwd):/$(basename $(pwd)) --user $(id -u):$(id -g)
   --workdir /$(basename $(pwd)) ${IMAGE} /bin/bash -c "make COURSE=LFD435 release-full"
