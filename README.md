@@ -26,8 +26,10 @@ script** — it's a template you copy into a course repo as `course-build-config
 - `image` — the Docker image to build with. After cloning the course repo, the script always
   prompts you with this as the default — press Enter to accept it, or type a different image to
   use just for this run.
-- `ilt-build-command` — the full shell command used to build an ILT course.
+- `ilt-build-command` — the full shell command used to build an ILT course. Required only when
+  releasing as ILT (`i`).
 - `elearning-build-command` — the full shell command used to build an e-learning course.
+  Required only when releasing as e-learning (`e`); an ILT-only course can leave it out.
 - `build-system-version` — the tag, in the course's build-system submodule, that this course must
   build against. After `git submodule update`, the script explicitly checks out this tag in that
   submodule and warns if it wasn't already pinned there — this is what catches a course silently

@@ -169,7 +169,8 @@ if [ ! -f "$COURSE_CONFIG" ]; then
     echo "ERROR: $COURSE_CONFIG_NAME not found in course repo." >&2
     echo "  Expected: $COURSE_CONFIG" >&2
     echo "Every course must commit its own $COURSE_CONFIG_NAME at its repo root," >&2
-    echo "defining: image, ilt-build-command, elearning-build-command, build-system-version." >&2
+    echo "defining: image, build-system-version, and the build command for the course type" >&2
+    echo "being released (ilt-build-command for ILT, elearning-build-command for e-learning)." >&2
     echo "See $REPO_CONFIG for a template to copy in." >&2
     echo "To build an older ref that predates its config, re-run and give a config file path" >&2
     echo "at the override prompt (see course-configs/ in $SCRIPT_DIR)." >&2
