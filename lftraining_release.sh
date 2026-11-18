@@ -407,10 +407,17 @@ prompt_continue
 
 # Reminders
 if [ "$COURSE_TYPE" == "i" ]; then
+   SHEET_OUT="$(python3 "$SCRIPT_DIR/update_version_sheet.py" "$COURSE_NAME" "$VERSION" 2>&1)"
+   SHEET_RC=$?
    echo "Reminding user of post-script actions..."
    echo "Don’t forget to compare LFCW/RELEASE/$COURSE_NAME/V$VERSION/"$COURSE_NAME"-long-outline_V"$VERSION.html  " with outline on wordpress site (https://training.linuxfoundation.org/wp-admin) and update wordpress site if necessary. Documentation for updating can be found here: https://confluence.linuxfoundation.org/display/TC/Updating+Wordpress+Site+Outline, Reach out to marketing for wordpress access if you don't have access."
    echo "Don’t forget to upload the following files found in the RELEASE/$COURSE_NAME/V$VERSION directory:" $COURSE_NAME"_"$VERSION.pdf", $COURSE_NAME-COVER-FRONT_V$VERSION.pdf and $COURSE_NAME-COVER-BACK_V$VERSION.pdf pdfs to printer at https://upload.zebraprintsolutions.com/index-sales.php"
-   echo "Don’t forget to update version to $VERSION in https://docs.google.com/spreadsheets/d/1zCsRyPDufgLK4ihgZ1x4iLZsjLaOZceDl1dA5hf1pqw/edit#gid=0"
+   if [ $SHEET_RC -eq 0 ]; then
+       echo "Version spreadsheet updated automatically: $SHEET_OUT"
+   else
+       echo "Don’t forget to update version to $VERSION in https://docs.google.com/spreadsheets/d/1zCsRyPDufgLK4ihgZ1x4iLZsjLaOZceDl1dA5hf1pqw/edit#gid=0"
+       echo "$SHEET_OUT"
+   fi
    echo "Don’t forget to email instructors@lists.linuxfoundation.org with subject: Release of $COURSE_NAME version $VERSION 
    message: Hi All, It is our pleasure to announce the release of version $VERSION of $COURSE_NAME. Authors and/or maintainers may wish to comment further on this release."
 else

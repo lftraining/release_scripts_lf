@@ -5,6 +5,8 @@ Pre-requisites
 Docker must be installed and you must be on Ubuntu 22.04 or later (others may work but no guarantees, also some have run into issues with apparmour/SELinux.
 To release a course you must have setup rclone with google drive and you must be added to the cm server. 
 
+For ILT releases the script also sets the course's version and date in the version spreadsheet, using `update_version_sheet.py` and the same rclone `remote` login. The Google Cloud project behind that login must have the Google Sheets API enabled. If it isn't, the release still finishes, and the reminders at the end tell you to update the spreadsheet by hand and give the link to turn the API on so future releases do it automatically. To set versions by hand: `./update_version_sheet.py [--dry-run] [--date M/D/YYYY] COURSE VERSION [COURSE VERSION ...]`.
+
 Adding user to cm server documentation can be found here - https://confluence.linuxfoundation.org/display/TC/Adding+to+and+Removing+a+User+from+CM+Server
 
 ## Build configuration
